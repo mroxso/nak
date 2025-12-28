@@ -455,11 +455,17 @@ aside from those, there is also:
 		{
 			Name:  "push",
 			Usage: "push git changes",
-			Flags: append(defaultKeyFlags, &cli.BoolFlag{
-				Name:    "force",
-				Aliases: []string{"f"},
-				Usage:   "force push to git remotes",
-			}),
+			Flags: append(defaultKeyFlags,
+				&cli.BoolFlag{
+					Name:    "force",
+					Aliases: []string{"f"},
+					Usage:   "force push to git remotes",
+				},
+				&cli.BoolFlag{
+					Name:  "tags",
+					Usage: "push all refs under refs/tags",
+				},
+			),
 			Action: func(ctx context.Context, c *cli.Command) error {
 				// setup signer
 				kr, _, err := gatherKeyerFromArguments(ctx, c)
@@ -526,6 +532,40 @@ aside from those, there is also:
 					log("- setting HEAD to branch %s\n", color.CyanString(remoteBranch))
 				}
 
+				if c.Bool("tags") {
+					// add all refs/tags
+					output, err := exec.Command("git", "show-ref", "--tags").Output()
+					if err != nil && err.Error() != "exit status 1" {
+						// exit status 1 is returned when there are no tags, which should be ok for us
+						return fmt.Errorf("failed to get local tags: %s", err)
+					} else {
+						lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+						for _, line := range lines {
+							line = strings.TrimSpace(line)
+							if line == "" {
+								continue
+							}
+							parts := strings.Fields(line)
+							if len(parts) != 2 {
+								continue
+							}
+							commitHash := parts[0]
+							ref := parts[1]
+
+							tagName := strings.TrimPrefix(ref, "refs/tags/")
+
+							if !c.Bool("force") {
+								// if --force is not passed then we can't overwrite tags
+								if existingHash, exists := state.Tags[tagName]; exists && existingHash != commitHash {
+									return fmt.Errorf("tag %s that is already published pointing to %s, call with --force to overwrite", tagName, existingHash)
+								}
+							}
+							state.Tags[tagName] = commitHash
+							log("- setting tag %s to commit %s\n", color.CyanString(tagName), color.CyanString(commitHash))
+						}
+					}
+				}
+
 				// create and sign the new state event
 				newStateEvent := state.ToEvent()
 				err = kr.SignEvent(ctx, &newStateEvent)
@@ -552,6 +592,9 @@ aside from those, there is also:
 					pushArgs := []string{"push", remoteName, fmt.Sprintf("%s:refs/heads/%s", localBranch, remoteBranch)}
 					if c.Bool("force") {
 						pushArgs = append(pushArgs, "--force")
+					}
+					if c.Bool("tags") {
+						pushArgs = append(pushArgs, "--tags")
 					}
 					pushCmd := exec.Command("git", pushArgs...)
 					pushCmd.Stderr = os.Stderr
@@ -1061,7 +1104,7 @@ func gitUpdateRefs(ctx context.Context, dir string, state nip34.RepositoryState)
 		lines := strings.Split(string(output), "\n")
 		for _, line := range lines {
 			parts := strings.Fields(line)
-			if len(parts) >= 2 && strings.Contains(parts[1], "refs/remotes/nip34/state/") {
+			if len(parts) >= 2 && strings.Contains(parts[1], "refs/heads/nip34/state/") {
 				delCmd := exec.Command("git", "update-ref", "-d", parts[1])
 				if dir != "" {
 					delCmd.Dir = dir
@@ -1078,7 +1121,7 @@ func gitUpdateRefs(ctx context.Context, dir string, state nip34.RepositoryState)
 			branchName = "refs/heads/" + branchName
 		}
 
-		refName := "refs/remotes/nip34/state/" + strings.TrimPrefix(branchName, "refs/heads/")
+		refName := "refs/heads/nip34/state/" + strings.TrimPrefix(branchName, "refs/heads/")
 		updateCmd := exec.Command("git", "update-ref", refName, commit)
 		if dir != "" {
 			updateCmd.Dir = dir
@@ -1091,7 +1134,7 @@ func gitUpdateRefs(ctx context.Context, dir string, state nip34.RepositoryState)
 	// create ref for HEAD
 	if state.HEAD != "" {
 		if headCommit, ok := state.Branches[state.HEAD]; ok {
-			headRefName := "refs/remotes/nip34/state/HEAD"
+			headRefName := "refs/heads/nip34/state/HEAD"
 			updateCmd := exec.Command("git", "update-ref", headRefName, headCommit)
 			if dir != "" {
 				updateCmd.Dir = dir

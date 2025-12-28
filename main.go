@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/textproto"
 	"os"
@@ -26,9 +25,9 @@ var app = &cli.Command{
 	Usage:                     "the nostr army knife command-line tool",
 	DisableSliceFlagSeparator: true,
 	Commands: []*cli.Command{
-		event,
+		eventCmd,
 		req,
-		filter,
+		filterCmd,
 		fetch,
 		count,
 		decode,
@@ -44,7 +43,7 @@ var app = &cli.Command{
 		encrypt,
 		decrypt,
 		gift,
-		outbox,
+		outboxCmd,
 		wallet,
 		mcpServer,
 		curl,
@@ -53,6 +52,7 @@ var app = &cli.Command{
 		git,
 		nip,
 		syncCmd,
+		spell,
 	},
 	Version: version,
 	Flags: []cli.Flag{
@@ -63,7 +63,7 @@ var app = &cli.Command{
 				if home, err := os.UserHomeDir(); err == nil {
 					return filepath.Join(home, ".config/nak")
 				} else {
-					return filepath.Join("/dev/null")
+					return ""
 				}
 			})(),
 		},
@@ -99,9 +99,7 @@ var app = &cli.Command{
 	Before: func(ctx context.Context, c *cli.Command) (context.Context, error) {
 		sys = sdk.NewSystem()
 
-		if err := initializeOutboxHintsDB(c, sys); err != nil {
-			return ctx, fmt.Errorf("failed to initialize outbox hints: %w", err)
-		}
+		setupLocalDatabases(c, sys)
 
 		sys.Pool = nostr.NewPool(nostr.PoolOptions{
 			AuthorKindQueryMiddleware: sys.TrackQueryAttempts,
